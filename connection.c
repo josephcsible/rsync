@@ -35,7 +35,7 @@ int claim_connection(char *fname, int max_connections)
 	/* Find a free spot. */
 	for (i = 0; i < max_connections; i++) {
 		if (lock_range(fd, i*4, 4))
-			return 1;
+			return 1; /* intentionally leak the fd */
 	}
 
 	close(fd);
