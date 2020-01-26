@@ -1141,23 +1141,38 @@ static void create_pid_file(void)
 	char pidbuf[16];
 	pid_t pid = getpid();
 	int fd, len;
+	struct stat statbuf;
 
 	if (!pid_file || !*pid_file)
 		return;
 
 	cleanup_set_pid(pid);
-	if ((fd = do_open(pid_file, O_WRONLY|O_CREAT|O_EXCL, 0666)) == -1) {
+	get_lock:
+	if ((fd = do_open(pid_file, O_WRONLY|O_CREAT, 0666)) == -1) {
 	  failure:
 		cleanup_set_pid(0);
 		fprintf(stderr, "failed to create pid file %s: %s\n", pid_file, strerror(errno));
 		rsyserr(FLOG, errno, "failed to create pid file %s", pid_file);
 		exit_cleanup(RERR_FILEIO);
 	}
+	if (!lock_range(fd, 0, 0))
+		goto failure;
+	/* We got a lock, but it's possible that an earlier instance of ourself unlinked the
+	 * file because of a race condition. Make sure that didn't happen. */
+	if (fstat(fd, &statbuf))
+		goto failure;
+	if (statbuf.st_nlink == 0) {
+		close(fd);
+		goto get_lock;
+	}
+	/* We definitely have a proper lock now. */
+	if (ftruncate(fd, 0))
+		goto failure;
 	snprintf(pidbuf, sizeof pidbuf, "%d\n", (int)pid);
 	len = strlen(pidbuf);
 	if (write(fd, pidbuf, len) != len)
 		goto failure;
-	close(fd);
+	/* Intentionally leak the fd, so that the lock remains throughout our lifetime. */
 }
 
 /* Become a daemon, discarding the controlling terminal. */
